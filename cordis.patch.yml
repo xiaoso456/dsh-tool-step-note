@@ -1,0 +1,6 @@
+# Step Note profile layer: add the model-written description argument to the
+# tools this plugin is enabled for. The row id is also the settings namespace
+# the browser settings page binds to.
+- insert:
+    - id: step-note
+      name: '@xiaoso/dsh-tool-step-note'
