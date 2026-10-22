@@ -4,11 +4,16 @@
   "description": "Add a short model-written description argument to enabled tools and show it on the chat step row.",
   "license": "MIT",
   "keywords": [
+    "deepseek",
     "deepseek-harness",
+    "deepseek-harness-plugin",
     "dsh",
     "dsh-plugin",
+    "dsh-plugins",
+    "agent-tools",
     "tool-schema",
     "step-description",
+    "typescript",
     "ui"
   ],
   "type": "module",
