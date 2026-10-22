@@ -1,79 +1,90 @@
-# @xiaoso/dsh-tool-step-note
+<div align="center">
 
-DeepSeek Harness 插件：给启用的工具加一个由模型填写的 `description` 参数，并把这句话显示在对话的步骤行上。标准模式和 PTC 模式都适用。
+# Step Note
 
-![步骤行：运行命令 · 步骤说明测试：等二十秒](docs/live-step.png)
+给 DeepSeek Harness 的工具加一句由模型填写的步骤说明，让你看懂模型现在正在做什么。
+
+简体中文 | [English](./README.en.md)
+
+[![npm version](https://img.shields.io/npm/v/@xiaoso/dsh-tool-step-note?logo=npm)](https://www.npmjs.com/package/@xiaoso/dsh-tool-step-note)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%3E%3D22.19%20%7C%20%3E%3D24-339933?logo=nodedotjs)](https://nodejs.org)
+[![DeepSeek Harness 0.2.x](https://img.shields.io/badge/DeepSeek%20Harness-0.2.x-4d6bfe.svg)](https://github.com/deepseek-ai/deepseek-harness)
+
+</div>
+
+## 功能特性
+
+- **为工具调用添加描述字段**：启用的工具会多一个由模型填写的 `description`，显示在对话的步骤行和工具卡片上。
+- **支持工具自定义描述字段提示词**：可以按语言、按工具覆盖这句描述的提示词。
 
 ## 安装
 
-适配 DeepSeek Harness 0.2.x（0.2.1 起，含预览版），需要 Node.js 22+。当前从本地目录安装：
+### 从 npm 安装
+
+需要 Node.js ≥ 22.19（或 ≥ 24）和 DeepSeek Harness 0.2.1+。
+
+**网页版**
 
 ```bash
-dsh plugin --profile web add "D:\code\pi-gateway-project\dsh-tool-step-note"
+dsh plugin --profile web add @xiaoso/dsh-tool-step-note
 dsh web
 ```
 
-安装后，设置里会出现「**步骤说明**」。卸载：
+**桌面端**
 
-```bash
-dsh plugin --profile web remove @xiaoso/dsh-tool-step-note
-```
+1. 侧边栏打开「**插件**」，点「**添加插件**」→「**安装第三方插件**」。
+2. 填入 `@xiaoso/dsh-tool-step-note`，点「**安装**」。
+3. 重启 DeepSeek Harness。
+
+安装后设置里出现「**工具步骤说明**」。
 
 ## 使用
-
-设置 → **步骤说明**，页面分「基本设置」和「工具」两个标签。
 
 ### 基本设置
 
 - **启用步骤说明**：总开关。
-- **设为必填**：默认关闭。打开后，没有单独设置的工具都要求模型必须填写这句说明；每个工具可以在「工具」页单独覆盖。原本就必填的工具和 run_code 不受影响。
-- **默认提示词语言**：
-  - **自动（跟随界面语言）**：界面是中文就用中文默认值，界面是英文就用英文默认值。界面语言每次请求都会重新解析。
-  - **中文**：bash、pwsh、run_code 的内置提示词换成中文译文；其他工具没有自带描述的，用中文全局提示词。
-  - **英文**：有自带描述的工具保持原版英文描述；没有的，用英文全局提示词。
-- **步骤说明提示词**：工具没有单独提示词、也没有自带描述时使用。留空表示跟随所选语言的默认值；填入文字则固定使用这段文字。切换语言时，仍是默认值的文字会跟着切换，改过的文字保持不动。
+- **设为必填**：默认关闭；打开后，没有单独设置的工具都要求模型必须填写这句说明。每个工具可以在「工具」页单独覆盖。
+- **默认提示词语言**：自动跟随界面语言；也可以固定中文或英文。留空的提示词会跟随所选语言。
+- **步骤说明提示词**：没有单独提示词、也没有自带描述的工具用它。
 
 ![基本设置](docs/settings.png)
 
 ### 工具
 
-选择哪些工具需要步骤说明。默认开启 edit、read、write、bash、pwsh、grep、glob、job_list、job_output、job_kill。
+默认开启：edit、read、write、bash、pwsh、grep、glob、job_list、job_output、job_kill。
 
-每个勾选的工具有三组独立配置：
+每个勾选的工具有三项设置：
 
-1. **单独设置提示词**：勾选后整段替换该工具的提示词；不勾选时，使用它自带的描述，或所选语言的默认提示词。bash、pwsh、run_code 默认就勾选，框里是所选语言的默认提示词（run_code 用内置提示词）；不改动时继续跟随语言，修改后才固定成你的文字。
-2. **必填**：默认跟随「基本设置」里的「设为必填」；勾选或取消可以单独覆盖这个工具。
-3. **替换工具卡片**：勾选后由插件绘制这个工具的一行卡片，步骤说明会一直留在卡片上；不勾选时保留 DSH 原生卡片。旁边的**优先级**越小越靠前，原生卡片是 0，所以插件只接受小于 0 的值（默认 -1000）。
+| 设置 | 作用 | 默认 |
+| --- | --- | --- |
+| **单独设置提示词** | 整段替换这个工具的提示词；不改动时跟随所选语言 | 默认未勾选 |
+| **必填** | 模型必须填写这句说明 | 跟随「基本设置」，可单独覆盖 |
+| **替换工具卡片** | 用插件的一行卡片代替原生卡片，说明常驻；优先级必须小于 0（默认 -1000） | read、write、edit 开启 |
 
-默认策略与原因（页面上每个工具都会显示对应说明）：
-
-- **默认替换**：read、write、edit。原生卡片显示路径，不显示说明；不替换的话，说明只在运行中的步骤行闪一下，结束后就看不到了。
-- **默认不替换**：bash、pwsh、run_code、grep、glob、web_search 已经会在原生卡片上显示说明；任务、目标、计划、子代理等工具是结构化结果卡片；ask_user_question、skill、present 是可交互的专用界面；其他工具的原生卡片已经显示工具名和说明。
-- 替换的代价：原生卡片里的行号视图、结构化任务回执、交互界面不会被复现。文件路径仍可点开，edit / write 仍会显示 diff。
-
-![工具与卡片设置](docs/custom-prompt.png)
-
-修改后点保存，下一次模型请求立即生效，无需重启。**恢复默认值**只填入草稿，保存后才写入。
+**默认替换 read、write、edit**：它们的原生卡片显示路径，不显示说明；不替换的话，说明只在运行中闪一下。bash、pwsh、grep、glob 等原生卡片已经显示说明；任务、目标、计划等是结果卡片；ask_user_question、skill、present 是交互界面，所以这些保留原生卡片。替换后原生详情不复现，但文件路径和 diff 仍在。
 
 ### run_code
 
-run_code 单独一张卡片。它本来就有步骤说明，且始终必填，插件不会再加第二个字段；单独设置提示词只在 PTC 模式生效，默认文本同样跟随语言。
+run_code 是 PTC 模式的工具。它本来就有步骤说明，且始终必填，插件不会再加第二个字段；「单独设置提示词」默认未勾选，使用内置提示词，修改后固定使用你的文字。
+
+### 试一下
+
+在标准模式下可以直接发这句，触发多个工具看效果：
+
+```text
+帮我做一次项目体检：读一下 package.json、tsconfig 和 tsdown.config.ts，搜一下还有没有遗留的 TODO，然后跑一次 pnpm build。只做检查，不要改文件，最后把结果告诉我。
+```
+
+想测 run_code 的卡片，切到 PTC 模式再让它打印 1+1。
 
 ## 说明
 
 - 插件只改「模型看到的 schema」，不改工具注册时的参数校验。
-- 步骤行里的这句话只在工具「运行中」显示。read、write 这类瞬间结束的工具默认结束后就看不到了；打开对应工具的「替换工具卡片」可以让它留在卡片上。
+- 步骤行里的说明只在工具「运行中」显示；read、write 这类瞬间结束的工具，默认靠替换卡片把说明留下来。
 - 参数根声明 `additionalProperties: false` 的工具会跳过；固定过程描述（enum、const）的工具不能修改；MCP 工具可能不接受额外参数，启用前请确认对应服务允许额外字段。
-- 提示词语言每次请求都会重新解析，所以改界面语言后下一次请求就生效；卡片替换在保存后立即重新注册，不需要刷新页面。
-
-## 开发
-
-```bash
-pnpm install
-pnpm build
-node --experimental-strip-types --no-warnings test/inject-check.mjs
-```
+- 提示词语言每次请求都会重新解析；卡片替换在保存后立即重新注册。
 
 ## License
 
-MIT
+[MIT](LICENSE)

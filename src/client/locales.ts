@@ -5,8 +5,8 @@
  */
 
 export const en = {
-  nav: 'Step Note',
-  pageTitle: 'Step Note',
+  nav: 'Tool Step Notes',
+  pageTitle: 'Tool Step Notes',
   pageDescription: 'Let the model add a one-line step note when it calls an enabled tool; the note appears next to the step in the chat.',
   viewBasic: 'Basics',
   viewTools: 'Tools',
@@ -104,8 +104,8 @@ export const en = {
 export type StepNoteLocaleKey = keyof typeof en
 
 export const zh: Record<StepNoteLocaleKey, string> = {
-  nav: '步骤说明',
-  pageTitle: '步骤说明',
+  nav: '工具步骤说明',
+  pageTitle: '工具步骤说明',
   pageDescription: '让模型在调用工具时多写一句步骤说明，显示在对话的步骤行上。',
   viewBasic: '基本设置',
   viewTools: '工具',
