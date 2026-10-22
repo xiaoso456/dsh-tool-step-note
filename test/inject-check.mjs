@@ -6,7 +6,7 @@ const base = {
   required: false,
   prompt: 'NEW PROMPT',
   enabledTools: new Set(['edit', 'read', 'write', 'bash', 'pwsh']),
-  overrideTools: new Set(),
+  toolPrompts: new Map(),
 }
 const withSubagent = new Set([...base.enabledTools, 'subagent'])
 
@@ -19,6 +19,21 @@ const withSubagent = new Set([...base.enabledTools, 'subagent'])
   assert.equal(out.schema.parameters.required, undefined)
 }
 
+// A per-tool prompt is used when the tool has no description of its own.
+{
+  const schema = { name: 'read', description: 'read a file', parameters: { type: 'object', properties: { path: { type: 'string' } } } }
+  const out = injectDescription(schema, { ...base, toolPrompts: new Map([['read', 'TOOL PROMPT']]) })
+  assert.equal(out.changed, true)
+  assert.equal(out.schema.parameters.properties.description.description, 'TOOL PROMPT')
+}
+
+// Empty per-tool prompts are ignored by the host parser, so the global prompt applies.
+{
+  const schema = { name: 'read', description: 'read a file', parameters: { type: 'object', properties: {} } }
+  const out = injectDescription(schema, base)
+  assert.equal(out.schema.parameters.properties.description.description, 'NEW PROMPT')
+}
+
 // The required switch adds the new argument to required.
 {
   const schema = { name: 'read', description: 'read a file', parameters: { type: 'object', properties: { path: { type: 'string' } } } }
@@ -26,7 +41,7 @@ const withSubagent = new Set([...base.enabledTools, 'subagent'])
   assert.deepEqual(out.schema.parameters.required, ['description'])
 }
 
-// An existing description keeps its own prompt unless the tool opts in.
+// An existing description keeps its own prompt unless the tool is named.
 {
   const schema = {
     name: 'subagent',
@@ -74,9 +89,13 @@ const withSubagent = new Set([...base.enabledTools, 'subagent'])
     },
   }
   const before = structuredClone(schema)
-  const out = injectDescription(schema, { ...base, enabledTools: withSubagent, overrideTools: new Set(['subagent']) })
+  const out = injectDescription(schema, {
+    ...base,
+    enabledTools: withSubagent,
+    toolPrompts: new Map([['subagent', 'TOOL PROMPT']]),
+  })
   assert.equal(out.changed, true)
-  assert.equal(out.schema.parameters.properties.description.description, 'NEW PROMPT')
+  assert.equal(out.schema.parameters.properties.description.description, 'TOOL PROMPT')
   assert.deepEqual(Object.keys(out.schema.parameters.properties), ['description', 'prompt'])
   assert.deepEqual(schema, before, 'input schema must not be mutated')
 }
@@ -108,9 +127,13 @@ const withSubagent = new Set([...base.enabledTools, 'subagent'])
       required: ['description', 'code'],
     },
   }
-  const out = injectDescription(schema, { ...base, required: false, overrideTools: new Set(['run_code']) })
+  const out = injectDescription(schema, {
+    ...base,
+    required: false,
+    toolPrompts: new Map([['run_code', 'TOOL PROMPT']]),
+  })
   assert.equal(out.changed, true)
-  assert.equal(out.schema.parameters.properties.description.description, 'NEW PROMPT')
+  assert.equal(out.schema.parameters.properties.description.description, 'TOOL PROMPT')
   assert.deepEqual(out.schema.parameters.required, ['description', 'code'])
 }
 

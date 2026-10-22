@@ -3,10 +3,9 @@
  * tool schema without changing the tool's registered validation.
  *
  * Tools that already define a top-level `description` argument keep their own
- * prompt by default; only tools listed in `overrideTools` get the configured
- * prompt. `run_code` is a special case: its built-in prompt stays unless it is
- * explicitly listed, because the executor already requires the argument and
- * its wording is part of the PTC contract.
+ * prompt unless `toolPrompts` names them; a named tool gets that text instead.
+ * A tool without a description gets the global prompt. `run_code` is a special
+ * case: its built-in prompt stays unless `toolPrompts` names it.
  *
  * Tool execution validates against the schema captured at registration
  * (`defineTool`), not against the assembled schema, so a first-party tool whose
@@ -93,16 +92,20 @@ export function injectDescription(schema: ToolSchema, config: ResolvedConfig): I
   // fixed protocol rule rather than a setting.
   const requireIt = isRunCode || config.required
   const requiredChanged = requireIt && !alreadyRequired
-  const override = config.overrideTools.has(schema.name)
-  const descriptionChanged = current === undefined
-    || (override && (current as Record<string, unknown>).description !== config.prompt)
+  const customPrompt = config.toolPrompts.get(schema.name)
+  const currentDescription = isRecord(current) && typeof current.description === 'string'
+    ? current.description
+    : undefined
+  const prompt = customPrompt ?? config.prompt
+  const override = customPrompt !== undefined
+  const descriptionChanged = current === undefined || (override && currentDescription !== customPrompt)
   if (!descriptionChanged && !requiredChanged) return { schema, changed: false }
 
   let nextProperties: Record<string, unknown>
   if (current === undefined) {
     // New argument first so it reads as the step's one-line intent.
     nextProperties = {
-      [DESCRIPTION]: { type: 'string', description: config.prompt },
+      [DESCRIPTION]: { type: 'string', description: prompt },
       ...(isRecord(properties) ? properties : {}),
     }
   } else if (override) {
@@ -112,7 +115,7 @@ export function injectDescription(schema: ToolSchema, config: ResolvedConfig): I
       [DESCRIPTION]: {
         ...current,
         ...(current.type === undefined ? { type: 'string' } : {}),
-        description: config.prompt,
+        description: customPrompt,
       },
     }
   } else {

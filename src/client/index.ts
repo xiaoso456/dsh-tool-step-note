@@ -18,11 +18,13 @@ import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import { StepNoteSection, type StepNoteSectionInjected } from './StepNoteSection.tsx'
+import { registerToolNoteRows } from './ToolNoteRow.tsx'
+import { NS } from './namespace.ts'
 import { en, zh } from './locales.ts'
 import type { StepNoteValue } from './values.ts'
 
 /** Settings namespace; the Host entry id is the same string. */
-export const NS = 'step-note'
+export { NS }
 
 /** Required services: slots + locale + the shared configuration forms. */
 export const inject = ['slots', 'locale', 'configForms']
@@ -47,4 +49,29 @@ export function apply(ctx: ClientContext): void {
     locale: NS,
     inject: (): StepNoteSectionInjected => ({ form }),
   }, StepNoteSection))), 'step-note: settings page')
+
+  // The note on settled tool cards follows the shared settings form: the same
+  // document the page edits, including writes made elsewhere. Registration is
+  // dynamic because the native view must come back the moment the switch goes
+  // off; the slot layer has no "empty placeholder" that could fall through.
+  ctx.effect(() => {
+    let stop: (() => void) | undefined
+    const sync = (): void => {
+      const value = form.getSnapshot().value
+      const on = value?.enabled !== false && value?.toolRows === true
+      if (on && stop === undefined) {
+        stop = registerToolNoteRows(ctx)
+      } else if (!on && stop !== undefined) {
+        stop()
+        stop = undefined
+      }
+    }
+    const unsubscribe = form.subscribe(sync)
+    sync()
+    return () => {
+      unsubscribe()
+      stop?.()
+      stop = undefined
+    }
+  }, 'step-note: tool card notes')
 }

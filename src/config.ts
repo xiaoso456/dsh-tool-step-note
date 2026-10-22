@@ -1,7 +1,7 @@
 /**
  * Step Note settings: which tools receive the description argument, whether it
- * is required, the prompt shown to the model, and which tools with an existing
- * description get that prompt replaced.
+ * is required, the global prompt shown to the model, and optional per-tool
+ * prompts that replace the global or a tool's own description prompt.
  *
  * The plugin entry id is the settings namespace (`step-note`). Every field is
  * declared volatile so the settings service can commit a browser write into
@@ -55,15 +55,33 @@ export const DEFAULT_ENABLED = true
 /** Default: the argument is optional; the user can make it required. */
 export const DEFAULT_REQUIRED = false
 
+/** Default: the native tool cards stay untouched. */
+export const DEFAULT_TOOL_ROWS = false
+
 /** Default prompt the model sees for a newly added description argument. */
 export const DEFAULT_PROMPT =
-  "One short sentence describing what this step does or is about to do, in the user's language. Shown next to the step in the UI."
+  '用中文一句话描述已经完成了什么，为了达到什么最终目标，接下来要做什么。'
 
 /** Default tools that receive the argument; the common first-party tools. */
-export const DEFAULT_ENABLED_TOOLS: readonly string[] = ['edit', 'read', 'write', 'bash', 'pwsh']
+export const DEFAULT_ENABLED_TOOLS: readonly string[] = [
+  'edit',
+  'read',
+  'write',
+  'bash',
+  'pwsh',
+  'grep',
+  'glob',
+  'job_list',
+  'job_output',
+  'job_kill',
+]
 
-/** Existing tool descriptions are kept unless the user opts in per tool. */
-export const DEFAULT_OVERRIDE_TOOLS: readonly string[] = []
+/** Per-tool prompts for the common tools that need a narrower instruction. */
+export const DEFAULT_TOOL_PROMPTS = JSON.stringify({
+  bash: '用中文主动语态，简明说明这条命令在做什么，控制在 5 到 15 个词（会显示在界面上）。示例："ls" → "列出当前目录中的文件"；"git status" → "查看工作树状态"；"npm install" → "安装项目依赖"。',
+  pwsh: '用中文主动语态，简明说明这条命令在做什么，控制在 5 到 15 个词（会显示在界面上）。示例："ls" → "列出当前目录中的文件"；"git status" → "查看工作树状态"；"Get-Process" → "列出正在运行的进程"。',
+  run_code: '用中文主动语态，简明说明这段程序在做什么，控制在 5 到 15 个词（会显示在界面上）。示例："统计各包中的 TODO 标记"；"读取失败的测试及其夹具"；"重命名每个 cordis.yml 里的配置键"。',
+})
 
 /** Plugin settings, one scalar key per option. */
 export interface Config {
@@ -71,21 +89,24 @@ export interface Config {
   enabled?: boolean
   /** Whether the description argument is required (run_code is always required). */
   required?: boolean
+  /** Whether the chat replaces the flash-only tools' cards with the note row (native cards cannot show it). */
+  toolRows?: boolean
   /** Prompt shown to the model for the description argument. */
   prompt?: string
   /** JSON array (or comma-separated list) of tool names to rewrite. */
   enabledTools?: string
-  /** JSON array (or comma-separated list) of tools whose existing description prompt is replaced. */
-  overrideTools?: string
+  /** JSON object mapping a tool name to that tool's own prompt. */
+  toolPrompts?: string
 }
 
 /** Settings schema; every field is writable through the shared settings form. */
 export const Config = z.object({
   enabled: z.boolean().default(DEFAULT_ENABLED).volatile(),
   required: z.boolean().default(DEFAULT_REQUIRED).volatile(),
+  toolRows: z.boolean().default(DEFAULT_TOOL_ROWS).volatile(),
   prompt: z.string().default(DEFAULT_PROMPT).volatile(),
   enabledTools: z.string().default(JSON.stringify(DEFAULT_ENABLED_TOOLS)).volatile(),
-  overrideTools: z.string().default(JSON.stringify(DEFAULT_OVERRIDE_TOOLS)).volatile(),
+  toolPrompts: z.string().default(DEFAULT_TOOL_PROMPTS).volatile(),
 })
 
 /** Live entry config: what the Loader hands `apply`, one stable reference per field. */
@@ -95,9 +116,11 @@ export type LiveConfig = ReturnType<typeof Config>
 export interface ResolvedConfig {
   enabled: boolean
   required: boolean
+  toolRows: boolean
   prompt: string
   enabledTools: ReadonlySet<string>
-  overrideTools: ReadonlySet<string>
+  /** Tool name to its own prompt; absent means follow the tool or global prompt. */
+  toolPrompts: ReadonlyMap<string, string>
 }
 
 /**
@@ -133,12 +156,29 @@ export function parseEnabledTools(value: string | undefined): Set<string> {
 }
 
 /**
- * Parse the override-tools setting; blank means no overrides.
+ * Parse the per-tool prompt setting. Malformed JSON or non-string values fall
+ * back to no per-tool prompts rather than breaking every model request.
  * @param value - raw setting text.
- * @returns the tools whose existing description prompt is replaced.
+ * @returns tool name to prompt, with blank prompts omitted.
  */
-export function parseOverrideTools(value: string | undefined): Set<string> {
-  return parseToolNames(value, DEFAULT_OVERRIDE_TOOLS)
+export function parseToolPrompts(value: string | undefined, fallback: ReadonlyMap<string, string> = new Map()): Map<string, string> {
+  const text = (value ?? '').trim()
+  if (text === '') return new Map(fallback)
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return new Map(fallback)
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return new Map(fallback)
+  const out = new Map<string, string>()
+  for (const [name, prompt] of Object.entries(parsed)) {
+    const tool = name.trim()
+    if (tool === '' || typeof prompt !== 'string') continue
+    const trimmed = prompt.trim()
+    if (trimmed !== '') out.set(tool, trimmed)
+  }
+  return out
 }
 
 /**
@@ -165,8 +205,9 @@ export function resolveConfig(input: Config | LiveConfig): ResolvedConfig {
   return {
     enabled: config.enabled ?? DEFAULT_ENABLED,
     required: config.required ?? DEFAULT_REQUIRED,
+    toolRows: config.toolRows ?? DEFAULT_TOOL_ROWS,
     prompt: prompt === '' ? DEFAULT_PROMPT : prompt,
     enabledTools: parseEnabledTools(config.enabledTools),
-    overrideTools: parseOverrideTools(config.overrideTools),
+    toolPrompts: parseToolPrompts(config.toolPrompts, parseToolPrompts(DEFAULT_TOOL_PROMPTS)),
   }
 }

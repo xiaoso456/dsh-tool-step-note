@@ -3,7 +3,10 @@ import { defineConfig } from 'tsdown'
 const PLUGIN_ID = '@xiaoso/dsh-tool-step-note'
 
 /** Externals the browser module loader answers from its frozen table. */
-const CLIENT_EXTERNALS = ['react', 'react/jsx-runtime']
+const CLIENT_EXTERNALS = [
+  'react', 'react/jsx-runtime',
+  '@deepseek-ai/dsh-client-ui-primitives',
+]
 
 export default defineConfig([
   {

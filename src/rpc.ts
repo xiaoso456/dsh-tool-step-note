@@ -47,9 +47,11 @@ export interface RunCodeEntry {
 export interface StepNoteDefaults {
   enabled: boolean
   required: boolean
+  toolRows: boolean
   prompt: string
   enabledTools: string
-  overrideTools: string
+  /** JSON object mapping a tool name to its own prompt. */
+  toolPrompts: string
 }
 
 /** Everything the settings page reads in one request. */

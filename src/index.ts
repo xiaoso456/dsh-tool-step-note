@@ -24,9 +24,10 @@ import {
   Config,
   DEFAULT_ENABLED,
   DEFAULT_ENABLED_TOOLS,
-  DEFAULT_OVERRIDE_TOOLS,
   DEFAULT_PROMPT,
   DEFAULT_REQUIRED,
+  DEFAULT_TOOL_PROMPTS,
+  DEFAULT_TOOL_ROWS,
   resolveConfig,
   type ResolvedConfig,
 } from './config.ts'
@@ -74,15 +75,16 @@ interface ToolRuntimeInternals {
 }
 
 /** Built-in PTC prompt used only before the host has assembled run_code. */
-const DEFAULT_RUN_CODE_PROMPT = 'Clear, concise description of what this program does in active voice, 5-10 words (shown in the UI).'
+const DEFAULT_RUN_CODE_PROMPT = '用中文主动语态，简明说明这段程序在做什么，控制在 5 到 15 个词（会显示在界面上）。示例："统计各包中的 TODO 标记"；"读取失败的测试及其夹具"；"重命名每个 cordis.yml 里的配置键"。'
 
 /** Schema defaults the page stages behind its "restore defaults" action. */
 const DEFAULTS: StepNoteDefaults = {
   enabled: DEFAULT_ENABLED,
   required: DEFAULT_REQUIRED,
+  toolRows: DEFAULT_TOOL_ROWS,
   prompt: DEFAULT_PROMPT,
   enabledTools: JSON.stringify(DEFAULT_ENABLED_TOOLS),
-  overrideTools: JSON.stringify(DEFAULT_OVERRIDE_TOOLS),
+  toolPrompts: DEFAULT_TOOL_PROMPTS,
 }
 
 /** Describe one registered tool for the settings page. */

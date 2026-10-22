@@ -3,3 +3,5 @@ lib/
 *.log
 *.tsbuildinfo
 .DS_Store
+.dsh-meow/
+.playwright-mcp/
