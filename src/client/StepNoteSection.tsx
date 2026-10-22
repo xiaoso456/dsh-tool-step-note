@@ -14,11 +14,23 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ConfigForm } from '@deepseek-ai/dsh-client-ui-settings/client'
+import type { StepNoteLocaleKey } from './locales.ts'
+import { languagePrompts, type PromptLanguage } from '../prompts.ts'
+import { serializeToolRequired } from '../tool-required.ts'
+import {
+  CARD_PRIORITY_DEFAULT,
+  CARD_PRIORITY_MAX,
+  CARD_PRIORITY_MIN,
+  DEFAULT_TOOL_CARDS,
+  clampCardPriority,
+  serializeToolCards,
+  type ToolCardConfig,
+  type ToolCardReason,
+} from '../tool-cards.ts'
 import {
   draftFromDefaults,
   draftFromValue,
   parseToolNames,
-  parseToolPrompts,
   sameDraft,
   serializeToolNames,
   serializeToolPrompts,
@@ -30,6 +42,8 @@ import {
 /** Registration-side face: the `step-note` entry's shared configuration form. */
 export interface StepNoteSectionInjected {
   form: ConfigForm<StepNoteValue>
+  /** Active UI language, read when the section renders. */
+  uiLanguage: () => PromptLanguage
 }
 
 /** Props the renderer binds for the section (owner + locale + injected face). */
@@ -42,12 +56,27 @@ export type StepNoteSectionProps =
 interface ToolInfo {
   name: string
   description: string
+  cardReason: ToolCardReason
+  cardPriority: number
   strict: boolean
   mcp: boolean
   hasDescription: boolean
   overridable: boolean
   descriptionRequired: boolean
   descriptionPrompt?: string
+}
+
+/** A card policy the draft carries; absent means keep the native card. */
+const CARD_OFF: ToolCardConfig = { replace: false, priority: CARD_PRIORITY_DEFAULT }
+
+/** Why a card is replaced by default, as the page explains it. */
+const CARD_REASON_KEY: Record<ToolCardReason, StepNoteLocaleKey> = {
+  nativeShows: 'cardReasonNativeShows',
+  nativeDrops: 'cardReasonNativeDrops',
+  resultCard: 'cardReasonResultCard',
+  customRow: 'cardReasonCustomRow',
+  generic: 'cardReasonGeneric',
+  noNote: 'cardReasonNoNote',
 }
 
 /** The reserved PTC transport card. */
@@ -117,6 +146,8 @@ const CSS = `
 .sn-switchHint{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}
 .sn-field{display:flex;flex-direction:column;gap:6px}
 .sn-fieldLabel{font-size:13px;line-height:20px;color:var(--dsw-alias-label-secondary)}
+.sn-select{box-sizing:border-box;max-width:280px;height:36px;padding:0 10px;border:1px solid var(--dsw-alias-border-l3);border-radius:8px;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;line-height:20px}
+.sn-select:focus{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px;border-color:transparent}
 .sn-textarea{width:100%;box-sizing:border-box;resize:vertical;min-height:76px;padding:8px 10px;border:1px solid var(--dsw-alias-border-l3);border-radius:8px;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;line-height:20px}
 .sn-textarea:focus{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px;border-color:transparent}
 .sn-hint{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}
@@ -143,8 +174,14 @@ const CSS = `
 .sn-badgeQuiet{background:transparent;color:var(--dsw-alias-label-secondary)}
 .sn-badgeMuted{background:transparent;color:var(--dsw-alias-label-secondary);border-style:dashed}
 .sn-toolDescription{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.sn-toolPrompt{margin:4px 0 2px 22px;padding:8px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-2);display:flex;flex-direction:column;gap:6px}
-.sn-toolPrompt[data-open="true"]{background:var(--dsw-alias-bg-layer-3)}
+.sn-toolOptions{display:flex;flex-direction:column;gap:10px;margin:6px 0 2px 22px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-2)}
+.sn-optionBlock{display:flex;flex-direction:column;gap:6px}
+.sn-optionRule{height:1px;background:var(--dsw-alias-border-l2)}
+.sn-optionChecks{display:flex;flex-wrap:wrap;align-items:center;gap:8px 18px}
+.sn-optionChecks .sn-priority{margin-left:auto}
+.sn-priority{display:inline-flex;align-items:center;gap:8px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}
+.sn-number{box-sizing:border-box;width:104px;height:30px;padding:0 8px;border:1px solid var(--dsw-alias-border-l3);border-radius:6px;background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:18px}
+.sn-number:focus{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px;border-color:transparent}
 .sn-customPrompt{display:flex;align-items:center;gap:6px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary);cursor:pointer}
 .sn-customPrompt input[type="checkbox"]{margin:0}
 .sn-promptEditor{display:flex;flex-direction:column;gap:6px;padding-top:2px}
@@ -187,7 +224,7 @@ body[data-ds-dark-theme] .sn-savebar{box-shadow:0 8px 24px rgba(0,0,0,.5),0 1px 
   .sn-savebar{width:100%;flex-wrap:wrap}
   .sn-saveState{flex-basis:100%}
   .sn-savebar .sn-button{flex:1 1 auto}
-  .sn-toolPrompt,.sn-lockedHint{margin-left:0}
+  .sn-toolOptions,.sn-lockedHint{margin-left:0}
 }
 @media (prefers-reduced-motion: reduce){
   .sn-savebar,.sn-button,.sn-toolMain,.sn-changed,.sn-tab{animation:none!important;transition:none!important}
@@ -239,9 +276,17 @@ function parsePayload(value: unknown): ToolListPayload | null {
   const tools: ToolInfo[] = []
   for (const item of value.tools) {
     if (!isRecord(item) || typeof item.name !== 'string') return null
+    const reason = item.cardReason
     tools.push({
       name: item.name,
       description: typeof item.description === 'string' ? item.description : '',
+      cardReason: reason === 'nativeShows' || reason === 'nativeDrops' || reason === 'resultCard'
+        || reason === 'customRow' || reason === 'generic' || reason === 'noNote'
+        ? reason
+        : 'generic',
+      cardPriority: typeof item.cardPriority === 'number' && Number.isFinite(item.cardPriority)
+        ? clampCardPriority(item.cardPriority)
+        : CARD_PRIORITY_DEFAULT,
       strict: item.strict === true,
       mcp: item.mcp === true,
       hasDescription: item.hasDescription === true,
@@ -256,9 +301,12 @@ function parsePayload(value: unknown): ToolListPayload | null {
   if (
     typeof defaults.enabled !== 'boolean'
     || typeof defaults.required !== 'boolean'
+    || (defaults.language !== 'zh' && defaults.language !== 'en')
     || typeof defaults.prompt !== 'string'
     || typeof defaults.enabledTools !== 'string'
     || typeof defaults.toolPrompts !== 'string'
+    || typeof defaults.toolCards !== 'string'
+    || typeof defaults.toolRequired !== 'string'
   ) return null
   return {
     tools,
@@ -270,10 +318,12 @@ function parsePayload(value: unknown): ToolListPayload | null {
     defaults: {
       enabled: defaults.enabled,
       required: defaults.required,
-      toolRows: defaults.toolRows === true,
+      language: defaults.language,
       prompt: defaults.prompt,
       enabledTools: defaults.enabledTools,
       toolPrompts: defaults.toolPrompts,
+      toolCards: defaults.toolCards,
+      toolRequired: defaults.toolRequired,
     },
   }
 }
@@ -308,11 +358,6 @@ function trimPrompts(prompts: ReadonlyMap<string, string>): ReadonlyMap<string, 
   const out = new Map<string, string>()
   for (const [name, value] of prompts) out.set(name, value.trim())
   return out
-}
-
-/** Normalize a stored per-tool prompt document to its stable JSON form. */
-function normalizePromptString(text: string): string {
-  return serializeToolPrompts(parseToolPrompts(text))
 }
 
 /** One tab in the section's underline tablist. */
@@ -432,7 +477,7 @@ function UnderlineTabs(props: {
   )
 }
 
-export function StepNoteSection({ form, t }: StepNoteSectionProps): ReactNode {
+export function StepNoteSection({ form, t, uiLanguage }: StepNoteSectionProps): ReactNode {
   const [snapshot, setSnapshot] = useState(() => form.getSnapshot())
   const [localDraft, setLocalDraft] = useState<StepNoteDraft | null>(null)
   const [saving, setSaving] = useState(false)
@@ -497,7 +542,7 @@ export function StepNoteSection({ form, t }: StepNoteSectionProps): ReactNode {
 
   useEffect(() => { void loadTools() }, [loadTools])
 
-  const baseDraft = draftFromValue(snapshot.value)
+  const baseDraft = draftFromValue(snapshot.value, roster?.defaults)
   const current = localDraft ?? baseDraft
   const normalized: StepNoteDraft = {
     ...current,
@@ -512,25 +557,31 @@ export function StepNoteSection({ form, t }: StepNoteSectionProps): ReactNode {
   const dirty = localDraft !== null && !sameDraft(normalized, baseNormalized)
   const globalEmpty = normalized.prompt === ''
   const customEmpty = [...normalized.prompts.values()].some(value => value === '')
-  const invalid = globalEmpty || customEmpty
+  const invalid = customEmpty
   const disabled = saving || !snapshot.writable
   const showSavebar = dirty || saving || notice !== null || closing
   const enabledChanged = normalized.enabled !== baseNormalized.enabled
   const requiredChanged = normalized.required !== baseNormalized.required
-  const toolRowsChanged = normalized.toolRows !== baseNormalized.toolRows
+  const languageChanged = normalized.language !== baseNormalized.language
   const promptChanged = normalized.prompt !== baseNormalized.prompt
   const toolsChanged = !sameNames(current.tools, baseDraft.tools)
   const promptsChanged = !samePromptValues(normalized.prompts, baseNormalized.prompts)
-  const behaviorChanged = enabledChanged || requiredChanged || toolRowsChanged || promptChanged
-  const toolsCardChanged = toolsChanged || promptsChanged
+  const cardsChanged = serializeToolCards(normalized.cards) !== serializeToolCards(baseNormalized.cards)
+  const requiredToolsChanged = serializeToolRequired(normalized.requiredTools) !== serializeToolRequired(baseNormalized.requiredTools)
+  const behaviorChanged = enabledChanged || requiredChanged || languageChanged || promptChanged
+  const toolsCardChanged = toolsChanged || promptsChanged || cardsChanged || requiredToolsChanged
   const runCodeChanged = (normalized.prompts.get('run_code') ?? '') !== (baseNormalized.prompts.get('run_code') ?? '')
+  // Which language's defaults the page shows. `auto` follows the live UI
+  // language, so switching the interface language moves the defaults even
+  // before the next save.
+  const effectiveLanguage: PromptLanguage = normalized.language === 'auto'
+    ? uiLanguage()
+    : normalized.language
+  const effectiveDefaults = languagePrompts(effectiveLanguage)
 
   const enabledCount = roster === null ? 0 : roster.tools.filter(tool => current.tools.has(tool.name)).length
   const existingCount = roster === null ? 0 : roster.tools.filter(tool => tool.hasDescription).length
-  const defaultToolPrompts = useMemo(
-    () => roster === null ? new Map<string, string>() : parseToolPrompts(roster.defaults.toolPrompts),
-    [roster],
-  )
+  const defaultToolPrompts = effectiveDefaults.toolPrompts
 
   // Order by the state at the last save, not the live draft: checking a row
   // must not move it out from under the pointer. Saving re-applies the order.
@@ -558,10 +609,40 @@ export function StepNoteSection({ form, t }: StepNoteSectionProps): ReactNode {
     })
   }, [orderedTools, filter, tab, current.tools, current.prompts])
 
-  const update = (patch: Partial<Pick<StepNoteDraft, 'enabled' | 'required' | 'toolRows' | 'prompt'>>): void => {
+  const update = (patch: Partial<Pick<StepNoteDraft, 'enabled' | 'required' | 'language' | 'prompt'>>): void => {
     setNotice(null)
     setClosing(false)
     setLocalDraft(previous => ({ ...(previous ?? baseDraft), ...patch }))
+  }
+
+  const changeLanguage = (choice: StepNoteDraft['language']): void => {
+    setNotice(null)
+    setClosing(false)
+    setLocalDraft((previous) => {
+      const draft = previous ?? baseDraft
+      const previousLanguage: PromptLanguage = draft.language === 'auto'
+        ? uiLanguage()
+        : draft.language
+      const nextLanguage: PromptLanguage = choice === 'auto'
+        ? uiLanguage()
+        : choice
+      if (previousLanguage === nextLanguage) return { ...draft, language: choice }
+      const from = languagePrompts(previousLanguage)
+      const to = languagePrompts(nextLanguage)
+      // Only text the user never touched follows the language switch: a prompt
+      // still equal to the old default is swapped for the new one, anything
+      // else is treated as a deliberate custom prompt.
+      const prompt = draft.prompt.trim() === from.prompt ? to.prompt : draft.prompt
+      const prompts = new Map(draft.prompts)
+      for (const [name, value] of [...prompts]) {
+        const fromValue = from.toolPrompts.get(name)
+        if (fromValue === undefined || value.trim() !== fromValue) continue
+        const toValue = to.toolPrompts.get(name)
+        if (toValue === undefined) prompts.delete(name)
+        else prompts.set(name, toValue)
+      }
+      return { ...draft, language: choice, prompt, prompts }
+    })
   }
 
   const toggleTool = (name: string, checked: boolean): void => {
@@ -604,11 +685,52 @@ export function StepNoteSection({ form, t }: StepNoteSectionProps): ReactNode {
     })
   }
 
+  const toggleCard = (name: string, checked: boolean, fallbackPriority: number): void => {
+    setNotice(null)
+    setClosing(false)
+    setLocalDraft((previous) => {
+      const draft = previous ?? baseDraft
+      const cards = new Map(draft.cards)
+      const existing = cards.get(name) ?? { replace: false, priority: fallbackPriority }
+      cards.set(name, { replace: checked, priority: existing.priority })
+      return { ...draft, cards }
+    })
+  }
+
+  const toggleRequired = (name: string, checked: boolean): void => {
+    setNotice(null)
+    setClosing(false)
+    setLocalDraft((previous) => {
+      const draft = previous ?? baseDraft
+      const requiredTools = new Map(draft.requiredTools)
+      // An explicit value equal to the global switch is not an override: drop
+      // it so the tool keeps following the switch.
+      if (checked === draft.required) requiredTools.delete(name)
+      else requiredTools.set(name, checked)
+      return { ...draft, requiredTools }
+    })
+  }
+
+  const updateCardPriority = (name: string, value: number, fallbackPriority: number): void => {
+    if (!Number.isFinite(value)) return
+    setNotice(null)
+    setClosing(false)
+    setLocalDraft((previous) => {
+      const draft = previous ?? baseDraft
+      const cards = new Map(draft.cards)
+      const existing = cards.get(name) ?? { replace: true, priority: fallbackPriority }
+      cards.set(name, { replace: existing.replace, priority: clampCardPriority(value) })
+      return { ...draft, cards }
+    })
+  }
+
   const reset = (): void => {
     if (roster === null || disabled) return
     setNotice(null)
     setClosing(false)
-    setLocalDraft(draftFromDefaults(roster.defaults))
+    // The language default is `auto`; pinning the resolved language would stop
+    // the defaults from following the UI later.
+    setLocalDraft({ ...draftFromDefaults(roster.defaults), language: 'auto' })
   }
 
   const discard = (): void => {
@@ -627,6 +749,7 @@ export function StepNoteSection({ form, t }: StepNoteSectionProps): ReactNode {
     setNotice(null)
     setClosing(false)
     const defaults = roster?.defaults
+    const defaultPrompt = effectiveDefaults.prompt
     let ok = true
     const writeField = async (field: string, value: unknown, currentValue: unknown, defaultValue: unknown): Promise<void> => {
       const revert = defaultValue !== undefined
@@ -640,16 +763,27 @@ export function StepNoteSection({ form, t }: StepNoteSectionProps): ReactNode {
     try {
       await writeField('enabled', normalized.enabled, baseNormalized.enabled, defaults?.enabled)
       await writeField('required', normalized.required, baseNormalized.required, defaults?.required)
-      await writeField('toolRows', normalized.toolRows, baseNormalized.toolRows, defaults?.toolRows)
-      await writeField('prompt', normalized.prompt, baseNormalized.prompt, defaults?.prompt)
+      await writeField('language', normalized.language, baseNormalized.language, 'auto')
+      // Saving the default text as an empty value keeps the prompt following
+      // the selected language instead of pinning today's translation.
+      const storedPrompt = snapshot.value?.prompt ?? ''
+      const nextPrompt = normalized.prompt === '' || normalized.prompt === defaultPrompt ? '' : normalized.prompt
+      await writeField('prompt', nextPrompt, storedPrompt, '')
       const nextTools = serializeToolNames(normalized.tools)
       const currentTools = serializeToolNames(baseNormalized.tools)
       const defaultTools = defaults === undefined ? undefined : normalizeToolString(defaults.enabledTools)
       await writeField('enabledTools', nextTools, currentTools, defaultTools)
+      // Unchanged defaults stay blank so they keep following the language; an
+      // edited or disabled default is written explicitly.
       const nextPrompts = serializeToolPrompts(normalized.prompts)
-      const currentPrompts = serializeToolPrompts(baseNormalized.prompts)
-      const defaultPrompts = defaults === undefined ? undefined : normalizePromptString(defaults.toolPrompts)
-      await writeField('toolPrompts', nextPrompts, currentPrompts, defaultPrompts)
+      const savePrompts = nextPrompts === serializeToolPrompts(defaultToolPrompts) ? '' : nextPrompts
+      await writeField('toolPrompts', savePrompts, snapshot.value?.toolPrompts ?? '', '')
+      const nextCards = serializeToolCards(normalized.cards)
+      const defaultCards = serializeToolCards(DEFAULT_TOOL_CARDS)
+      const saveCards = nextCards === defaultCards ? '' : nextCards
+      await writeField('toolCards', saveCards, snapshot.value?.toolCards ?? '', '')
+      const nextRequiredTools = normalized.requiredTools.size === 0 ? '' : serializeToolRequired(normalized.requiredTools)
+      await writeField('toolRequired', nextRequiredTools, snapshot.value?.toolRequired ?? '', '')
     } catch {
       ok = false
     }
@@ -658,6 +792,9 @@ export function StepNoteSection({ form, t }: StepNoteSectionProps): ReactNode {
     if (ok) {
       setLocalDraft(null)
       setNotice('saved')
+      // The route's defaults belong to the language just saved; refresh the
+      // roster so the fallback texts and the run_code preview follow it.
+      void loadTools()
     } else {
       setNotice('failed')
     }
@@ -667,11 +804,23 @@ export function StepNoteSection({ form, t }: StepNoteSectionProps): ReactNode {
     const checked = current.tools.has(tool.name)
     const customValue = current.prompts.get(tool.name)
     const customChecked = customValue !== undefined
+    const defaultPrompt = defaultToolPrompts.get(tool.name)
+    const usingDefault = customChecked && defaultPrompt !== undefined && (customValue ?? '') === defaultPrompt
     const locked = isLocked(tool)
     const fallback = tool.descriptionPrompt ?? defaultToolPrompts.get(tool.name) ?? normalized.prompt
+    const card = current.cards.get(tool.name) ?? CARD_OFF
+    const baseCard = baseDraft.cards.get(tool.name) ?? CARD_OFF
+    const cardChanged = card.replace !== baseCard.replace
+      || (card.replace && card.priority !== baseCard.priority)
+    const requiredEffective = current.requiredTools.get(tool.name) ?? current.required
+    const requiredHereChanged = current.requiredTools.has(tool.name) !== baseDraft.requiredTools.has(tool.name)
+      || current.requiredTools.get(tool.name) !== baseDraft.requiredTools.get(tool.name)
     const changed = checked !== baseDraft.tools.has(tool.name)
       || (customValue ?? '').trim() !== (baseDraft.prompts.get(tool.name) ?? '').trim()
+      || cardChanged
+      || requiredHereChanged
     const promptId = 'step-note-tool-prompt-' + tool.name
+    const cardId = 'step-note-tool-card-priority-' + tool.name
     const main = (
       <label className='sn-toolMain'>
         <input
@@ -719,48 +868,96 @@ export function StepNoteSection({ form, t }: StepNoteSectionProps): ReactNode {
           )}
         {checked && !locked
           ? (
-            <div className='sn-toolPrompt' data-open={customChecked ? 'true' : undefined}>
-              <label className='sn-customPrompt'>
-                <input
-                  type='checkbox'
-                  checked={customChecked}
-                  disabled={disabled}
-                  onChange={event => toggleCustomPrompt(tool.name, event.target.checked, fallback)}
-                  aria-controls={customChecked ? promptId : undefined}
-                  aria-expanded={customChecked}
-                />
-                <span>{t('customPrompt')}</span>
-              </label>
-              {customChecked
-                ? (
-                  <div className='sn-promptEditor' id={promptId}>
-                    <p className='sn-hint'>{tool.hasDescription ? t('customOnOwn') : t('customOnGlobal')}</p>
-                    <textarea
-                      className='sn-textarea'
-                      rows={3}
-                      value={customValue ?? ''}
+            <div className='sn-toolOptions'>
+              <div className='sn-optionBlock'>
+                <label className='sn-customPrompt'>
+                  <input
+                    type='checkbox'
+                    checked={customChecked}
+                    disabled={disabled}
+                    onChange={event => toggleCustomPrompt(tool.name, event.target.checked, fallback)}
+                    aria-controls={customChecked ? promptId : undefined}
+                    aria-expanded={customChecked}
+                  />
+                  <span>{t('customPrompt')}</span>
+                </label>
+                {customChecked
+                  ? (
+                    <div className='sn-promptEditor' id={promptId}>
+                      <p className='sn-hint'>{usingDefault ? t('customDefaultOn') : (tool.hasDescription ? t('customOnOwn') : t('customOnGlobal'))}</p>
+                      <textarea
+                        className='sn-textarea'
+                        rows={3}
+                        value={customValue ?? ''}
+                        disabled={disabled}
+                        aria-label={t('customPrompt')}
+                        onChange={event => updateCustomPrompt(tool.name, event.target.value)}
+                      />
+                      {(customValue ?? '').trim() === ''
+                        ? <p className='sn-errorText'>{t('customEmpty')}</p>
+                        : null}
+                    </div>
+                  )
+                  : (
+                    <>
+                      <p className='sn-hint'>{tool.hasDescription ? t('customOffOwn') : t('customOffGlobal')}</p>
+                      {tool.hasDescription && tool.descriptionPrompt !== undefined
+                        ? (
+                          <details className='sn-defaultDetails'>
+                            <summary>{t('viewOwnPrompt')}</summary>
+                            <p className='sn-defaultPrompt'>{highlightMatch(tool.descriptionPrompt, filter)}</p>
+                          </details>
+                        )
+                        : null}
+                    </>
+                  )}
+              </div>
+              <div className='sn-optionRule' />
+              <div className='sn-optionBlock'>
+                <div className='sn-optionChecks'>
+                  <label className='sn-customPrompt' title={t('requiredToolHint')}>
+                    <input
+                      type='checkbox'
+                      checked={requiredEffective}
                       disabled={disabled}
-                      aria-label={t('customPrompt')}
-                      onChange={event => updateCustomPrompt(tool.name, event.target.value)}
+                      onChange={event => toggleRequired(tool.name, event.target.checked)}
                     />
-                    {(customValue ?? '').trim() === ''
-                      ? <p className='sn-errorText'>{t('customEmpty')}</p>
-                      : null}
-                  </div>
-                )
-                : (
-                  <>
-                    <p className='sn-hint'>{tool.hasDescription ? t('customOffOwn') : t('customOffGlobal')}</p>
-                    {tool.hasDescription && tool.descriptionPrompt !== undefined
-                      ? (
-                        <details className='sn-defaultDetails'>
-                          <summary>{t('viewOwnPrompt')}</summary>
-                          <p className='sn-defaultPrompt'>{highlightMatch(tool.descriptionPrompt, filter)}</p>
-                        </details>
-                      )
-                      : null}
-                  </>
-                )}
+                    <span>{t('requiredShort')}</span>
+                  </label>
+                  <label className='sn-customPrompt'>
+                    <input
+                      type='checkbox'
+                      checked={card.replace}
+                      disabled={disabled}
+                      onChange={event => toggleCard(tool.name, event.target.checked, tool.cardPriority)}
+                      aria-controls={card.replace ? cardId : undefined}
+                      aria-expanded={card.replace}
+                    />
+                    <span>{t('cardReplace')}</span>
+                  </label>
+                  {card.replace
+                    ? (
+                      <label className='sn-priority' htmlFor={cardId}>
+                        <span>{t('cardPriority')}</span>
+                        <input
+                          id={cardId}
+                          className='sn-number'
+                          type='number'
+                          inputMode='numeric'
+                          step={1}
+                          min={CARD_PRIORITY_MIN}
+                          max={CARD_PRIORITY_MAX}
+                          value={card.priority}
+                          disabled={disabled}
+                          onChange={event => updateCardPriority(tool.name, Number(event.target.value), tool.cardPriority)}
+                        />
+                      </label>
+                    )
+                    : null}
+                </div>
+                <p className='sn-hint'>{t(CARD_REASON_KEY[tool.cardReason])}</p>
+                {card.replace ? <p className='sn-hint'>{t('cardReplaceHint')}</p> : null}
+              </div>
             </div>
           )
           : null}
@@ -775,6 +972,8 @@ export function StepNoteSection({ form, t }: StepNoteSectionProps): ReactNode {
     if (roster === null) return null
     const customValue = current.prompts.get('run_code')
     const customChecked = customValue !== undefined
+    const defaultPrompt = defaultToolPrompts.get('run_code')
+    const usingDefault = customChecked && defaultPrompt !== undefined && (customValue ?? '') === defaultPrompt
     const promptId = 'step-note-run-code-prompt'
     return (
       <section className='sn-card'>
@@ -810,7 +1009,7 @@ export function StepNoteSection({ form, t }: StepNoteSectionProps): ReactNode {
               {customChecked
                 ? (
                   <div className='sn-promptEditor' id={promptId}>
-                    <p className='sn-hint'>{t('runCodeCustomOn')}</p>
+                    <p className='sn-hint'>{usingDefault ? t('runCodeDefaultOn') : t('runCodeCustomOn')}</p>
                     <textarea
                       className='sn-textarea'
                       rows={3}
@@ -932,18 +1131,21 @@ export function StepNoteSection({ form, t }: StepNoteSectionProps): ReactNode {
                   <span className='sn-switchHint'>{t('requiredHint')}</span>
                 </span>
               </label>
-              <label className='sn-switchRow'>
-                <input
-                  type='checkbox'
-                  checked={current.toolRows}
+              <div className='sn-field'>
+                <label className='sn-fieldLabel' htmlFor='step-note-language'>{t('language')}</label>
+                <select
+                  id='step-note-language'
+                  className='sn-select'
+                  value={current.language}
                   disabled={disabled}
-                  onChange={event => update({ toolRows: event.target.checked })}
-                />
-                <span className='sn-switchText'>
-                  <span className='sn-switchTitle'>{t('replaceCards')}</span>
-                  <span className='sn-switchHint'>{t('replaceCardsHint')}</span>
-                </span>
-              </label>
+                  onChange={event => changeLanguage(event.target.value as StepNoteDraft['language'])}
+                >
+                  <option value='auto'>{t('languageAuto')}</option>
+                  <option value='zh'>{t('languageZh')}</option>
+                  <option value='en'>{t('languageEn')}</option>
+                </select>
+                <p className='sn-hint'>{t('languageHint')}</p>
+              </div>
               <div className='sn-field'>
                 <label className='sn-fieldLabel' htmlFor='step-note-prompt'>{t('prompt')}</label>
                 <textarea
@@ -954,9 +1156,7 @@ export function StepNoteSection({ form, t }: StepNoteSectionProps): ReactNode {
                   disabled={disabled}
                   onChange={event => update({ prompt: event.target.value })}
                 />
-                <p className={globalEmpty ? 'sn-errorText' : 'sn-hint'}>
-                  {globalEmpty ? t('promptEmpty') : t('promptHint')}
-                </p>
+                <p className='sn-hint'>{globalEmpty ? t('promptEmptyHint') : t('promptHint')}</p>
               </div>
             </section>
           </div>
@@ -1062,7 +1262,7 @@ export function StepNoteSection({ form, t }: StepNoteSectionProps): ReactNode {
               {notice === 'saved' ? <span className='sn-saved'>{t('saved')}</span> : null}
               {notice === 'failed' ? <span className='sn-failure'>{t('saveFailed')}</span> : null}
               {dirty && invalid
-                ? <span className='sn-failure'>{globalEmpty ? t('promptEmpty') : t('customEmpty')}</span>
+                ? <span className='sn-failure'>{t('customEmpty')}</span>
                 : null}
             </div>
             {dirty

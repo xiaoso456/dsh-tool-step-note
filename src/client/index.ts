@@ -21,7 +21,8 @@ import { StepNoteSection, type StepNoteSectionInjected } from './StepNoteSection
 import { registerToolNoteRows } from './ToolNoteRow.tsx'
 import { NS } from './namespace.ts'
 import { en, zh } from './locales.ts'
-import type { StepNoteValue } from './values.ts'
+import { parseToolNames, type StepNoteValue } from './values.ts'
+import { parseToolCards, serializeToolCards } from '../tool-cards.ts'
 
 /** Settings namespace; the Host entry id is the same string. */
 export { NS }
@@ -36,6 +37,19 @@ export const inject = ['slots', 'locale', 'configForms']
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'step-note: page dictionaries')
 
+  // Tell the Host which interface language is on screen, so `auto` prompt
+  // defaults follow the UI even when no locale preference has been saved yet.
+  const reportLanguage = (): void => {
+    const active = ctx.locale.getLocale().active.toLowerCase()
+    void fetch('/step-note/active-language', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ language: active.startsWith('zh') ? 'zh' : 'en' }),
+    }).catch(() => {})
+  }
+  ctx.on('locale/change', reportLanguage)
+  reportLanguage()
+
   // One shared form per namespace: the page reads and writes the same document
   // the Host serves for the `step-note` entry.
   const form = ctx.configForms.get<StepNoteValue>(NS)
@@ -47,24 +61,34 @@ export function apply(ctx: ClientContext): void {
     order: 17,
     label: () => ctx.locale.bind(NS)('nav'),
     locale: NS,
-    inject: (): StepNoteSectionInjected => ({ form }),
+    inject: (): StepNoteSectionInjected => ({
+      form,
+      // Read at render time: the slot re-renders when the locale changes.
+      uiLanguage: () => ctx.locale.getLocale().active.toLowerCase().startsWith('zh') ? 'zh' : 'en',
+    }),
   }, StepNoteSection))), 'step-note: settings page')
 
   // The note on settled tool cards follows the shared settings form: the same
   // document the page edits, including writes made elsewhere. Registration is
-  // dynamic because the native view must come back the moment the switch goes
+  // dynamic because the native view must come back the moment a tool is turned
   // off; the slot layer has no "empty placeholder" that could fall through.
+  // The signature covers both the selected tools and their priorities, so an
+  // edit re-registers instead of keeping the old shadow row.
   ctx.effect(() => {
     let stop: (() => void) | undefined
+    let applied = ''
     const sync = (): void => {
       const value = form.getSnapshot().value
-      const on = value?.enabled !== false && value?.toolRows === true
-      if (on && stop === undefined) {
-        stop = registerToolNoteRows(ctx)
-      } else if (!on && stop !== undefined) {
-        stop()
-        stop = undefined
-      }
+      const cards = value?.enabled === false ? new Map() : parseToolCards(value?.toolCards)
+      const enabledTools = value?.enabledTools === undefined ? undefined : parseToolNames(value.enabledTools)
+      const selected = new Map([...cards].filter(([name, card]) => card.replace
+        && (enabledTools === undefined || enabledTools.has(name))))
+      const signature = serializeToolCards(selected)
+      if (signature === applied) return
+      applied = signature
+      stop?.()
+      stop = undefined
+      if (selected.size > 0) stop = registerToolNoteRows(ctx, selected)
     }
     const unsubscribe = form.subscribe(sync)
     sync()

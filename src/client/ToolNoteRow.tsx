@@ -1,13 +1,13 @@
 /**
- * Tool-card note layer: replaces the built-in rows of the tools whose
- * description would otherwise only flash by on the running step line
- * (read/write/edit and the job tools), so the note stays on the settled card.
+ * Tool-card note layer: replaces the built-in row of each tool the user opted
+ * in for, so the note stays on the settled card instead of only flashing by on
+ * the running step line.
  *
  * The built-in views cannot be extended, only replaced: the keyed
  * tool.call.toolview slot lets a later registration shadow an occupied key,
- * and "lowest priority renders". We register at a priority below the shipped
- * zero, and only while the toolRows setting is on; turning it off disposes
- * the registrations and the native cards come back.
+ * and "lowest priority renders". Each tool carries its own priority (below the
+ * shipped zero) and its own switch; the browser half re-registers whenever the
+ * map changes so a disabled tool gets its native card back.
  *
  * The body keeps the primitive DiffBlock for edit/write (the diff is derivable
  * from the arguments) and falls back to a plain preformatted pane for the
@@ -30,12 +30,7 @@ import {
 import type { DiffHunk } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import { NS } from './namespace.ts'
-
-/** Tools whose native card drops the model-written note. */
-export const TOOL_NOTE_KEYS = ['read', 'write', 'edit', 'job_list', 'job_output', 'job_kill'] as const
-
-/** Registration priority: below the shipped zero, so this entry shadows it. */
-const SHADOW_PRIORITY = -1000
+import type { ToolCardConfig } from '../tool-cards.ts'
 
 /** Lazy argument view of one tool call (the framework's ToolArgs surface). */
 interface ArgsView {
@@ -120,7 +115,8 @@ function iconOf(tool: string): ReactNode {
   if (tool === 'write' || tool === 'edit') return <IconEditOutlineRegular size={14} />
   if (tool === 'job_list') return <IconChecklistOutlineRegular size={14} />
   if (tool === 'job_output') return <IconInspectOutlineRegular size={14} />
-  return <IconCloseOutlineRegular size={14} />
+  if (tool === 'job_kill') return <IconCloseOutlineRegular size={14} />
+  return <IconInspectOutlineRegular size={14} />
 }
 
 /** Text of a complete argument, or undefined while the view still grows. */
@@ -268,7 +264,7 @@ function ToolNoteRow({
   return (
     <DisclosureRow
       icon={iconOf(toolName)}
-      title={t(titleKey ?? 'rowRead')}
+      title={titleKey === undefined ? toolName : t(titleKey)}
       open={expanded}
       expandable={expandable}
       onToggle={toggle}
@@ -296,18 +292,21 @@ function ToolNoteRow({
 }
 
 /**
- * Register the shadow rows for the flash-only tools.
+ * Register the shadow rows for the tools the user opted in for.
  * @param ctx - browser plugin context.
+ * @param entries - tool name to its shadow priority; `replace` is true for every entry.
  * @returns the disposer restoring the native views.
  */
-export function registerToolNoteRows(ctx: ClientContext): () => void {
+export function registerToolNoteRows(ctx: ClientContext, entries: ReadonlyMap<string, ToolCardConfig>): () => void {
+  if (entries.size === 0) return () => {}
   ensureCss()
   const slots = ctx.slots as unknown as SlotRegistrySlice
   const removers: (() => void)[] = []
   const stop = slots.inject(TOOLVIEW_SLOT, () => {
-    for (const key of TOOL_NOTE_KEYS) {
+    for (const [key, card] of entries) {
+      if (!card.replace) continue
       removers.push(slots.register(
-        { name: TOOLVIEW_SLOT, key, priority: SHADOW_PRIORITY, locale: NS },
+        { name: TOOLVIEW_SLOT, key, priority: card.priority, locale: NS },
         ToolNoteRow,
       ))
     }

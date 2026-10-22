@@ -90,7 +90,7 @@ export function injectDescription(schema: ToolSchema, config: ResolvedConfig): I
   const alreadyRequired = required !== undefined && required.includes(DESCRIPTION)
   // run_code's executor rejects an empty description, so its requirement is a
   // fixed protocol rule rather than a setting.
-  const requireIt = isRunCode || config.required
+  const requireIt = isRunCode || (config.toolRequired?.get(schema.name) ?? config.required)
   const requiredChanged = requireIt && !alreadyRequired
   const customPrompt = config.toolPrompts.get(schema.name)
   const currentDescription = isRecord(current) && typeof current.description === 'string'

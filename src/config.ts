@@ -1,7 +1,13 @@
 /**
  * Step Note settings: which tools receive the description argument, whether it
- * is required, the global prompt shown to the model, and optional per-tool
- * prompts that replace the global or a tool's own description prompt.
+ * is required, the default prompt language, the global prompt shown to the
+ * model, optional per-tool prompts, and which native tool cards this plugin
+ * replaces.
+ *
+ * Language-dependent defaults live in prompts.ts: Chinese translates the
+ * built-in prompts of bash/pwsh/run_code, English keeps every tool's own
+ * description. A blank prompt/toolPrompts value means "use the language
+ * default", so switching the language moves the defaults with it.
  *
  * The plugin entry id is the settings namespace (`step-note`). Every field is
  * declared volatile so the settings service can commit a browser write into
@@ -11,6 +17,9 @@
 
 import type { Volatile } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
+import { languagePrompts, type PromptLanguage } from './prompts.ts'
+import { DEFAULT_TOOL_CARDS, parseToolCards, type ToolCardConfig } from './tool-cards.ts'
+import { parseToolRequired } from './tool-required.ts'
 
 /**
  * The Loader commits a settings write into this plugin's live config
@@ -55,12 +64,11 @@ export const DEFAULT_ENABLED = true
 /** Default: the argument is optional; the user can make it required. */
 export const DEFAULT_REQUIRED = false
 
-/** Default: the native tool cards stay untouched. */
-export const DEFAULT_TOOL_ROWS = false
+/** How the default prompt language is chosen: follow the UI locale preference. */
+export type LanguageSetting = 'auto' | PromptLanguage
 
-/** Default prompt the model sees for a newly added description argument. */
-export const DEFAULT_PROMPT =
-  '用中文一句话描述已经完成了什么，为了达到什么最终目标，接下来要做什么。'
+/** Default: follow the UI language. */
+export const DEFAULT_LANGUAGE: LanguageSetting = 'auto'
 
 /** Default tools that receive the argument; the common first-party tools. */
 export const DEFAULT_ENABLED_TOOLS: readonly string[] = [
@@ -76,51 +84,55 @@ export const DEFAULT_ENABLED_TOOLS: readonly string[] = [
   'job_kill',
 ]
 
-/** Per-tool prompts for the common tools that need a narrower instruction. */
-export const DEFAULT_TOOL_PROMPTS = JSON.stringify({
-  bash: '用中文主动语态，简明说明这条命令在做什么，控制在 5 到 15 个词（会显示在界面上）。示例："ls" → "列出当前目录中的文件"；"git status" → "查看工作树状态"；"npm install" → "安装项目依赖"。',
-  pwsh: '用中文主动语态，简明说明这条命令在做什么，控制在 5 到 15 个词（会显示在界面上）。示例："ls" → "列出当前目录中的文件"；"git status" → "查看工作树状态"；"Get-Process" → "列出正在运行的进程"。',
-  run_code: '用中文主动语态，简明说明这段程序在做什么，控制在 5 到 15 个词（会显示在界面上）。示例："统计各包中的 TODO 标记"；"读取失败的测试及其夹具"；"重命名每个 cordis.yml 里的配置键"。',
-})
-
 /** Plugin settings, one scalar key per option. */
 export interface Config {
   /** Whether the assembly transform runs at all. */
   enabled?: boolean
   /** Whether the description argument is required (run_code is always required). */
   required?: boolean
-  /** Whether the chat replaces the flash-only tools' cards with the note row (native cards cannot show it). */
-  toolRows?: boolean
-  /** Prompt shown to the model for the description argument. */
+  /** Default prompt language: `auto` follows the UI locale, otherwise `zh` or `en`. */
+  language?: string
+  /** Global prompt; blank uses the language default. */
   prompt?: string
   /** JSON array (or comma-separated list) of tool names to rewrite. */
   enabledTools?: string
-  /** JSON object mapping a tool name to that tool's own prompt. */
+  /** JSON object mapping a tool name to that tool's own prompt; blank uses the language defaults. */
   toolPrompts?: string
+  /** JSON object mapping a tool name to {replace, priority}; blank uses the built-in defaults. */
+  toolCards?: string
+  /** JSON object mapping a tool name to whether the note is required; absent follows `required`. */
+  toolRequired?: string
 }
 
 /** Settings schema; every field is writable through the shared settings form. */
 export const Config = z.object({
   enabled: z.boolean().default(DEFAULT_ENABLED).volatile(),
   required: z.boolean().default(DEFAULT_REQUIRED).volatile(),
-  toolRows: z.boolean().default(DEFAULT_TOOL_ROWS).volatile(),
-  prompt: z.string().default(DEFAULT_PROMPT).volatile(),
+  language: z.string().default(DEFAULT_LANGUAGE).volatile(),
+  prompt: z.string().default('').volatile(),
   enabledTools: z.string().default(JSON.stringify(DEFAULT_ENABLED_TOOLS)).volatile(),
-  toolPrompts: z.string().default(DEFAULT_TOOL_PROMPTS).volatile(),
+  toolPrompts: z.string().default('').volatile(),
+  toolCards: z.string().default('').volatile(),
+  toolRequired: z.string().default('').volatile(),
 })
 
 /** Live entry config: what the Loader hands `apply`, one stable reference per field. */
 export type LiveConfig = ReturnType<typeof Config>
 
-/** The fully-resolved settings the transform consumes. */
+/** The fully-resolved settings the transform and the browser layer consume. */
 export interface ResolvedConfig {
   enabled: boolean
   required: boolean
-  toolRows: boolean
+  /** Resolved prompt language (never `auto`). */
+  language: PromptLanguage
   prompt: string
   enabledTools: ReadonlySet<string>
   /** Tool name to its own prompt; absent means follow the tool or global prompt. */
   toolPrompts: ReadonlyMap<string, string>
+  /** Tool name to its card replacement policy. */
+  cards: ReadonlyMap<string, ToolCardConfig>
+  /** Tool name to a required override; absent follows `required`. */
+  toolRequired: ReadonlyMap<string, boolean>
 }
 
 /**
@@ -159,6 +171,7 @@ export function parseEnabledTools(value: string | undefined): Set<string> {
  * Parse the per-tool prompt setting. Malformed JSON or non-string values fall
  * back to no per-tool prompts rather than breaking every model request.
  * @param value - raw setting text.
+ * @param fallback - prompts used when the setting is absent or blank.
  * @returns tool name to prompt, with blank prompts omitted.
  */
 export function parseToolPrompts(value: string | undefined, fallback: ReadonlyMap<string, string> = new Map()): Map<string, string> {
@@ -182,6 +195,22 @@ export function parseToolPrompts(value: string | undefined, fallback: ReadonlyMa
 }
 
 /**
+ * Resolve the prompt language: an explicit `zh`/`en` wins, otherwise the
+ * UI locale preference (the `locale` settings namespace) decides. Without a
+ * preference, Chinese stays the default.
+ * @param setting - the plugin's `language` field.
+ * @param preference - the UI locale preference, when one is configured.
+ * @returns the resolved language.
+ */
+export function resolveLanguage(setting: string | undefined, preference: string | undefined): PromptLanguage {
+  if (setting === 'zh' || setting === 'en') return setting
+  const normalized = (preference ?? '').toLowerCase()
+  if (normalized.startsWith('zh')) return 'zh'
+  if (normalized !== '') return 'en'
+  return 'zh'
+}
+
+/**
  * Unwrap the Loader's live field references into a plain settings document.
  * @param input - the entry's live config, or an already-plain document.
  * @returns a plain copy carrying the fields the input has.
@@ -196,18 +225,27 @@ function plainFields(input: Config | LiveConfig): Config {
 
 /**
  * Resolve the composition entry to the settings the transform consumes.
+ * Blank prompt fields take the resolved language's defaults; an explicitly
+ * saved document (even `{}`) replaces them.
  * @param input - the entry's live config, or a plain (possibly partial) document.
+ * @param language - the resolved prompt language.
  * @returns the fully-defaulted settings.
  */
-export function resolveConfig(input: Config | LiveConfig): ResolvedConfig {
+export function resolveConfig(input: Config | LiveConfig, language: PromptLanguage): ResolvedConfig {
   const config = plainFields(input)
-  const prompt = (config.prompt ?? '').trim()
+  const defaults = languagePrompts(language)
+  const prompt = (config.prompt ?? '').trim() || defaults.prompt
+  const rawPrompts = (config.toolPrompts ?? '').trim()
   return {
     enabled: config.enabled ?? DEFAULT_ENABLED,
     required: config.required ?? DEFAULT_REQUIRED,
-    toolRows: config.toolRows ?? DEFAULT_TOOL_ROWS,
-    prompt: prompt === '' ? DEFAULT_PROMPT : prompt,
+    language,
+    prompt,
     enabledTools: parseEnabledTools(config.enabledTools),
-    toolPrompts: parseToolPrompts(config.toolPrompts, parseToolPrompts(DEFAULT_TOOL_PROMPTS)),
+    toolPrompts: rawPrompts === ''
+      ? new Map(defaults.toolPrompts)
+      : parseToolPrompts(config.toolPrompts, new Map()),
+    cards: parseToolCards(config.toolCards, DEFAULT_TOOL_CARDS),
+    toolRequired: parseToolRequired(config.toolRequired),
   }
 }

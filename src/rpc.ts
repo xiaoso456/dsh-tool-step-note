@@ -16,6 +16,12 @@ import type { Context } from '@deepseek-ai/cordis'
 /** One tool as the settings page needs it. */
 export interface ToolListEntry {
   name: string
+  /** Why this tool's card is replaced by default, or why it is not. */
+  cardReason: 'nativeShows' | 'nativeDrops' | 'resultCard' | 'customRow' | 'generic' | 'noNote'
+  /** Whether the built-in defaults replace this tool's card. */
+  cardDefault: boolean
+  /** Shadow priority the built-in defaults use for this tool. */
+  cardPriority: number
   description: string
   /** The tool declares `additionalProperties: false`, so the argument cannot be added. */
   strict: boolean
@@ -47,11 +53,16 @@ export interface RunCodeEntry {
 export interface StepNoteDefaults {
   enabled: boolean
   required: boolean
-  toolRows: boolean
+  /** Resolved prompt language of these defaults. */
+  language: 'zh' | 'en'
   prompt: string
   enabledTools: string
   /** JSON object mapping a tool name to its own prompt. */
   toolPrompts: string
+  /** JSON object mapping a tool name to its card policy. */
+  toolCards: string
+  /** JSON object mapping a tool name to a required override; blank follows `required`. */
+  toolRequired: string
 }
 
 /** Everything the settings page reads in one request. */
@@ -79,8 +90,14 @@ interface ConnectionLike {
 /** Prefix owned by this plugin. */
 const ROUTE_PREFIX = '/step-note'
 
-/** The only endpoint on the prefix. */
+/** The roster endpoint. */
 const TOOLS_ENDPOINT = `${ROUTE_PREFIX}/tools`
+
+/** The browser reports the active interface language here (no persistence). */
+const LANGUAGE_ENDPOINT = `${ROUTE_PREFIX}/active-language`
+
+/** The languages the defaults exist for. */
+export type ReportedLanguage = 'zh' | 'en'
 
 /** Write one JSON response. */
 function sendJson(res: ServerResponse, status: number, value: unknown): void {
@@ -91,13 +108,48 @@ function sendJson(res: ServerResponse, status: number, value: unknown): void {
 }
 
 /**
+ * Read the small JSON body of a language report.
+ * @param req - the incoming request.
+ * @returns the reported language, or undefined when malformed.
+ */
+function readReportedLanguage(req: IncomingMessage): Promise<ReportedLanguage | undefined> {
+  return new Promise((resolve) => {
+    const chunks: Buffer[] = []
+    let size = 0
+    req.on('data', (chunk: Buffer) => {
+      size += chunk.length
+      if (size > 1024) {
+        resolve(undefined)
+        req.destroy()
+        return
+      }
+      chunks.push(chunk)
+    })
+    req.on('end', () => {
+      try {
+        const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { language?: unknown }
+        resolve(body.language === 'zh' || body.language === 'en' ? body.language : undefined)
+      } catch {
+        resolve(undefined)
+      }
+    })
+    req.on('error', () => { resolve(undefined) })
+  })
+}
+
+/**
  * Install the tool-list route. Returns a disposer that removes the route; the
  * child row itself is owned by `ctx` and disposed with it.
  * @param ctx - plugin context owning the child row.
  * @param list - reads the current roster, sorted by name.
+ * @param report - records the interface language the browser reports.
  * @returns a disposer for the route registration.
  */
-export function installToolListRoute(ctx: Context, list: () => ToolListPayload): () => void {
+export function installToolListRoute(
+  ctx: Context,
+  list: () => ToolListPayload,
+  report?: (language: ReportedLanguage) => void,
+): () => void {
   let disposer: (() => void) | undefined
 
   ctx.plugin({
@@ -121,6 +173,23 @@ export function installToolListRoute(ctx: Context, list: () => ToolListPayload):
               return
             }
             const pathname = new URL(req.url ?? '/', 'http://localhost').pathname
+            if (pathname === LANGUAGE_ENDPOINT) {
+              if (req.method !== 'POST') {
+                res.setHeader('allow', 'POST')
+                sendJson(res, 405, { error: 'method-not-allowed' })
+                return
+              }
+              void readReportedLanguage(req).then((language) => {
+                if (language === undefined) {
+                  sendJson(res, 400, { error: 'invalid-language' })
+                  return
+                }
+                report?.(language)
+                res.statusCode = 204
+                res.end()
+              })
+              return
+            }
             if (pathname !== TOOLS_ENDPOINT) {
               sendJson(res, 404, { error: 'not-found' })
               return
