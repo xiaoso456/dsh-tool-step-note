@@ -2,8 +2,6 @@
 
 # Step Note
 
-给 DeepSeek Harness 的工具加一句由模型填写的步骤说明，让你看懂模型现在正在做什么。
-
 简体中文 | [English](./README.en.md)
 
 [![npm version](https://img.shields.io/npm/v/@xiaoso/dsh-tool-step-note?logo=npm)](https://www.npmjs.com/package/@xiaoso/dsh-tool-step-note)
@@ -12,6 +10,10 @@
 [![DeepSeek Harness 0.2.x](https://img.shields.io/badge/DeepSeek%20Harness-0.2.x-4d6bfe.svg)](https://github.com/deepseek-ai/deepseek-harness)
 
 </div>
+
+给 DeepSeek Harness 的工具加一句由模型填写的步骤说明，让你看懂模型现在正在做什么。
+
+![工具步骤说明显示在对话的步骤行上](docs/hero.png)
 
 ## 功能特性
 
@@ -41,6 +43,16 @@ dsh web
 
 ## 使用
 
+### 试一下
+
+在标准模式下发送下面这句，可以触发多个工具：
+
+```text
+帮我做一次项目体检：读一下 package.json、tsconfig 和 tsdown.config.ts，搜一下还有没有遗留的 TODO，然后跑一次 pnpm build。只做检查，不要改文件，最后把结果告诉我。
+```
+
+测试 run_code 卡片：切到 PTC 模式，让它打印 1+1。
+
 ### 基本设置
 
 - **启用步骤说明**：总开关。
@@ -69,16 +81,6 @@ bash、pwsh、grep、glob 等原生卡片已经显示说明；任务、目标、
 ### run_code
 
 run_code 是 PTC 模式的工具，本身就有步骤说明且始终必填，插件不会再添加第二个字段。「单独设置提示词」默认未勾选，使用内置提示词；修改后固定使用你写的文字。
-
-### 试一下
-
-在标准模式下发送下面这句，可以触发多个工具：
-
-```text
-帮我做一次项目体检：读一下 package.json、tsconfig 和 tsdown.config.ts，搜一下还有没有遗留的 TODO，然后跑一次 pnpm build。只做检查，不要改文件，最后把结果告诉我。
-```
-
-测试 run_code 卡片：切到 PTC 模式，让它打印 1+1。
 
 ## 说明
 

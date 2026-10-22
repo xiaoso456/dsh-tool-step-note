@@ -2,8 +2,6 @@
 
 # Step Note
 
-A one-line, model-written step note for every DeepSeek Harness tool call, so you can see what the model is doing right now.
-
 [简体中文](./README.md) | English
 
 [![npm version](https://img.shields.io/npm/v/@xiaoso/dsh-tool-step-note?logo=npm)](https://www.npmjs.com/package/@xiaoso/dsh-tool-step-note)
@@ -12,6 +10,10 @@ A one-line, model-written step note for every DeepSeek Harness tool call, so you
 [![DeepSeek Harness 0.2.x](https://img.shields.io/badge/DeepSeek%20Harness-0.2.x-4d6bfe.svg)](https://github.com/deepseek-ai/deepseek-harness)
 
 </div>
+
+A one-line, model-written step note for every DeepSeek Harness tool call, so you can see what the model is doing right now.
+
+![Step notes on tool calls](docs/hero.png)
 
 ## Features
 
@@ -41,6 +43,16 @@ After installation, **Tool Step Notes** appears in Settings.
 
 ## Usage
 
+### Try it
+
+In standard mode, send this to trigger several tools at once:
+
+```text
+Give this project a quick health check: read package.json, tsconfig and tsdown.config.ts, search for leftover TODO comments, then run pnpm build. Check only — do not change files — and report the result.
+```
+
+To see the run_code card, switch to PTC mode and ask it to print 1+1.
+
 ### Basics
 
 - **Enable step notes**: master switch.
@@ -69,16 +81,6 @@ bash, pwsh, grep and glob already show it; task, goal and plan tools are result 
 ### run_code
 
 run_code is a PTC-mode tool. It already has a step note and is always required, so the plugin does not add a second field. Its separate prompt is unchecked by default and uses the built-in prompt; editing it makes it use your text.
-
-### Try it
-
-In standard mode, send this to trigger several tools at once:
-
-```text
-Give this project a quick health check: read package.json, tsconfig and tsdown.config.ts, search for leftover TODO comments, then run pnpm build. Check only — do not change files — and report the result.
-```
-
-To see the run_code card, switch to PTC mode and ask it to print 1+1.
 
 ## Notes
 

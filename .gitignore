@@ -5,3 +5,5 @@ lib/
 .DS_Store
 .dsh-meow/
 .playwright-mcp/
+tmp/
+*.tgz
